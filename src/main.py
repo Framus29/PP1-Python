@@ -1,18 +1,6 @@
-import sys
-from pathlib import Path
-
-SRC_DIR = Path(__file__).resolve().parent
-if str(SRC_DIR) not in sys.path:
-    sys.path.append(str(SRC_DIR))
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
-
-# Importar modelos para registrarlos en SQLModel.metadata (gestión con Alembic)
-from models.categoria import Categoria    # noqa: F401
-from models.producto import Producto      # noqa: F401
-from models.usuarios import Usuario       # noqa: F401
 
 from routers.auth import auth_routers
 from routers.categorias import categorias_routers

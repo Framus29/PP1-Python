@@ -17,8 +17,8 @@ class ProductoBase(SQLModel):  # parecido a ProductoCreateUpdate
     nombre: str = Field(max_length=100)
     descripcion: str | None = None
     precio: float
-    stock: int | None = None
-    activo: bool = True
+    stock: int | None
+    activo: bool
     #Establecemos la Clave Foránea
     categoria_id: int | None = Field(default=None, foreign_key="categoria.id")
 

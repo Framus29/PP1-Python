@@ -1,8 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlmodel import paginate
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi_pagination import Page, paginate
 
 # Ahora que usamos SQLModel no traemos nada de sqlalchemy.
 from sqlmodel import Session, select
@@ -34,7 +33,8 @@ NOT_FOUND_RESPONSE = {
 # get all categorias (paginado)
 @categorias_routers.get("/", response_model=Page[CategoriaPublic])
 async def get_categorias(db: Session = Depends(get_db)):
-    return paginate(db, select(Categoria))
+    categorias = db.exec(select(Categoria)).all()
+    return paginate(categorias)
 
 
 # get by id (con datos anidados de productos)
@@ -55,7 +55,6 @@ async def get_categoria_by_id(
 @categorias_routers.post(
     "/",
     response_model=CategoriaPublic,
-    status_code=status.HTTP_201_CREATED,
 )
 async def crear_categoria(
     categoria_nueva: CategoriaBase, db: Session = Depends(get_db)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from core.auth import get_password_hash, verify_password
@@ -11,7 +11,6 @@ auth_routers = APIRouter()
 @auth_routers.post(
     "/register",
     response_model=UsuarioPublic,
-    status_code=status.HTTP_201_CREATED,
 )  # REGISTER: CREACIÓN DE MODELO USUARIO
 async def register(usuario_nuevo: UsuarioCreate, db: Session = Depends(get_db)):
     # El email es UNIQUE: validamos antes para devolver un 400 claro.
@@ -20,7 +19,7 @@ async def register(usuario_nuevo: UsuarioCreate, db: Session = Depends(get_db)):
     ).first()
     if existe is not None:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail="Ya existe un usuario con ese email",
         )
 
@@ -42,14 +41,14 @@ async def login(usuario: UsuarioLogin, db: Session = Depends(get_db)):
 
     if usuario_db is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Credenciales inválidas",
         )
 
     resultado = verify_password(usuario.contraseña, usuario_db.contraseña)
     if not resultado:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Credenciales inválidas",
         )
 

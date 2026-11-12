@@ -33,24 +33,20 @@ PP1-Python/
 ├── base_de_datos.db             # SQLite gestionada por Alembic
 ├── seed.py                      # Poblar la DB con datos relacionales
 ├── test_api.py                  # Suite de pruebas automatizadas
-├── main.py                      # Punto de entrada raíz
 └── src/
     ├── database.py              # engine, get_db() con SQLModel
     ├── main.py                  # FastAPI app + routers + CORS + paginación
     │
     ├── core/
-    │   ├── __init__.py
     │   └── auth.py              # get_password_hash(), verify_password()
     │
     ├── models/                  # Modelos SQLModel (tabla + schema en uno)
-    │   ├── __init__.py
     │   ├── categoria.py         # CategoriaBase, Categoria (table=True), CategoriaPublic
     │   ├── producto.py          # ProductoBase, Producto (table=True, FK), ProductoPublic
     │   ├── usuarios.py          # Usuario, UsuarioCreate, UsuarioPublic, UsuarioLogin
     │   └── anidados.py          # ProductoNested, CategoriaNested
     │
     └── routers/                 # Path Operations CRUD
-        ├── __init__.py
         ├── categorias.py        # categorias_routers → /categorias/
         ├── productos.py         # productos_routers  → /productos/
         ├── auth.py              # auth_routers       → /auth/
@@ -78,7 +74,6 @@ python seed.py
 
 # 5. Iniciar el servidor
 fastapi dev src/main.py
-# o: uvicorn src.main:app --reload
 ```
 
 Docs interactiva: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
@@ -94,7 +89,7 @@ Docs interactiva: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 |:---|:---|:---|:---|
 | `GET` | `/categorias/?page=1&size=50` | Lista paginada (`Page[CategoriaPublic]`) | `200 OK` |
 | `GET` | `/categorias/{id}` | Por ID con productos anidados (`CategoriaNested`) | `200` / `404` |
-| `POST` | `/categorias/` | Crear nueva categoría | `201 Created` |
+| `POST` | `/categorias/` | Crear nueva categoría | `200 OK` |
 | `PUT` | `/categorias/{id}` | Editar categoría | `200` / `404` |
 | `DELETE` | `/categorias/{id}` | Borrado físico | `200` / `404` |
 | `DELETE` | `/categorias/{id}?logico=true` | Borrado lógico (`activo=False`) | `200` / `404` |
@@ -104,15 +99,15 @@ Docs interactiva: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 |:---|:---|:---|:---|
 | `GET` | `/productos/?page=1&size=50` | Lista paginada con categoría anidada (`Page[ProductoNested]`) | `200 OK` |
 | `GET` | `/productos/{id}` | Por ID con categoría anidada (`ProductoNested`) | `200` / `404` |
-| `POST` | `/productos/` | Crear (valida que `categoria_id` exista) | `201` / `400` |
-| `PUT` | `/productos/{id}` | Editar producto | `200` / `400` / `404` |
+| `POST` | `/productos/` | Crear producto | `200 OK` |
+| `PUT` | `/productos/{id}` | Editar producto | `200` / `404` |
 | `DELETE` | `/productos/{id}` | Borrado físico | `200` / `404` |
 | `DELETE` | `/productos/{id}?logico=true` | Borrado lógico (`activo=False`) | `200` / `404` |
 
 ### Autenticación (`/auth`)
 | Método | Endpoint | Descripción | Respuesta |
 |:---|:---|:---|:---|
-| `POST` | `/auth/register` | Registrar usuario (contraseña hasheada con bcrypt) | `201` / `400` |
+| `POST` | `/auth/register` | Registrar usuario (contraseña hasheada con bcrypt) | `200` / `400` |
 | `POST` | `/auth/login` | Verificar credenciales | `200` / `401` |
 
 Ejemplo de registro:
@@ -150,4 +145,4 @@ Podés agregar el origen de tu frontend en `allow_origins`.
 python test_api.py
 ```
 
-La suite prueba CRUD de categorías y productos, paginación, validación de FK, borrado lógico/físico y registro/login de usuarios.
+La suite prueba CRUD de categorías y productos, paginación, borrado lógico/físico y registro/login de usuarios.
