@@ -1,7 +1,13 @@
 import sys
+import uuid
 from pathlib import Path
 
-# Agregar src a sys.path
+# Evita errores de encoding en consolas Windows (cp1252)
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 SRC_DIR = Path(__file__).resolve().parent / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
@@ -12,81 +18,161 @@ from src.main import app
 client = TestClient(app)
 
 
-def test_modular_crud():
-    print("Iniciando pruebas del CRUD modularizado...")
+def test_api_completa():
+    print("Iniciando pruebas de FastAPI con SQLModel, Alembic, paginación y auth...\n")
 
-    # 1. Test Root
+    # 1. Root
     res = client.get("/")
-    assert res.status_code == 200, f"Error en GET /: {res.text}"
+    assert res.status_code == 200
     print("✓ GET / OK")
 
-    # 2. Test Saludo router
+    # 2. Saludo
     res = client.get("/saludar/")
-    assert res.status_code == 200, f"Error en GET /saludar/: {res.text}"
+    assert res.status_code == 200
     print("✓ GET /saludar/ OK")
 
-    # 3. Test Create Producto (POST /productos/)
-    payload = {
-        "nombre": "Gamepad Inalámbrico Bluetooth",
-        "descripcion": "Compatible con PC y Consolas, batería recargable",
-        "precio": 39.99,
-        "stock": 20,
-        "categoria": "Accesorios",
-        "activo": True
-    }
-    res = client.post("/productos/", json=payload)
-    assert res.status_code == 201, f"Error en POST /productos/: {res.text}"
+    # 3. Registro de usuario (contraseña hasheada con bcrypt)
+    email = f"tester_{uuid.uuid4().hex[:8]}@mail.com"
+    res = client.post(
+        "/auth/register",
+        json={"nombre": "Tester", "email": email, "contraseña": "secreto123"},
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["email"] == email
+    assert "contraseña" not in res.json()
+    print(f"✓ POST /auth/register OK (usuario: {email})")
+
+    # 4. Email duplicado -> 400
+    res = client.post(
+        "/auth/register",
+        json={"nombre": "Tester", "email": email, "contraseña": "secreto123"},
+    )
+    assert res.status_code == 400
+    print("✓ POST /auth/register email duplicado -> 400 OK")
+
+    # 5. Login correcto e incorrecto
+    res = client.post(
+        "/auth/login", json={"email": email, "contraseña": "secreto123"}
+    )
+    assert res.status_code == 200
+    assert res.json()["coincide"] is True
+    print("✓ POST /auth/login OK")
+
+    res = client.post(
+        "/auth/login", json={"email": email, "contraseña": "incorrecta"}
+    )
+    assert res.status_code == 401
+    print("✓ POST /auth/login credenciales inválidas -> 401 OK")
+
+    # 6. Crear Categoría
+    res = client.post(
+        "/categorias/",
+        json={
+            "nombre": "Consolas",
+            "descripcion": "Consolas de nueva generación",
+            "activo": True,
+        },
+    )
+    assert res.status_code == 201, res.text
+    cat = res.json()
+    cat_id = cat["id"]
+    assert cat["nombre"] == "Consolas"
+    print(f"✓ POST /categorias/ OK (ID: {cat_id})")
+
+    # 7. Listar Categorías (paginado)
+    res = client.get("/categorias/")
+    assert res.status_code == 200
     data = res.json()
-    producto_id = data["id"]
-    assert data["nombre"] == payload["nombre"]
-    assert data["precio"] == payload["precio"]
-    print(f"✓ POST /productos/ OK (Creado producto ID: {producto_id})")
+    assert "items" in data and "total" in data
+    assert data["total"] >= 1
+    print(f"✓ GET /categorias/ paginado OK (Total: {data['total']})")
 
-    # 4. Test List Productos (GET /productos/)
+    # 8. Crear Producto con FK a Categoría
+    res = client.post(
+        "/productos/",
+        json={
+            "nombre": "PlayStation 5 Slim",
+            "descripcion": "Consola Sony con DualSense",
+            "precio": 549.99,
+            "stock": 10,
+            "categoria_id": cat_id,
+            "activo": True,
+        },
+    )
+    assert res.status_code == 201, res.text
+    prod = res.json()
+    prod_id = prod["id"]
+    assert prod["categoria"]["id"] == cat_id
+    print(f"✓ POST /productos/ OK (ID: {prod_id}, FK categoria_id: {cat_id})")
+
+    # 9. FK inválida debe rechazarse con 400
+    res = client.post(
+        "/productos/",
+        json={"nombre": "Inv", "precio": 10.0, "categoria_id": 999999},
+    )
+    assert res.status_code == 400
+    print("✓ Validación FK inexistente -> 400 OK")
+
+    # 10. Listar Productos (paginado, con categoría anidada)
     res = client.get("/productos/")
-    assert res.status_code == 200, f"Error en GET /productos/: {res.text}"
-    productos = res.json()
-    assert len(productos) >= 1
-    print(f"✓ GET /productos/ OK (Total: {len(productos)} productos)")
+    assert res.status_code == 200
+    data = res.json()
+    assert "items" in data and "total" in data
+    print(f"✓ GET /productos/ paginado OK (Total: {data['total']})")
 
-    # 5. Test Get By ID (GET /productos/{id})
-    res = client.get(f"/productos/{producto_id}")
-    assert res.status_code == 200, f"Error en GET /productos/{producto_id}: {res.text}"
-    assert res.json()["id"] == producto_id
-    print(f"✓ GET /productos/{producto_id} OK")
+    # 11. GET Producto con ProductoNested
+    res = client.get(f"/productos/{prod_id}")
+    assert res.status_code == 200
+    assert res.json()["categoria"]["nombre"] == "Consolas"
+    print(f"✓ GET /productos/{prod_id} con ProductoNested OK")
 
-    # 6. Test Update (PUT /productos/{id})
-    update_data = {
-        "precio": 34.99,
-        "stock": 25
-    }
-    res = client.put(f"/productos/{producto_id}", json=update_data)
-    assert res.status_code == 200, f"Error en PUT /productos/{producto_id}: {res.text}"
-    updated = res.json()
-    assert updated["precio"] == 34.99
-    assert updated["stock"] == 25
-    assert updated["nombre"] == payload["nombre"]
-    print(f"✓ PUT /productos/{producto_id} OK")
+    # 12. GET Categoría con CategoriaNested (lista de productos)
+    res = client.get(f"/categorias/{cat_id}")
+    assert res.status_code == 200
+    assert len(res.json()["productos"]) >= 1
+    print(f"✓ GET /categorias/{cat_id} con CategoriaNested OK")
 
-    # 7. Test Borrado Lógico (DELETE /productos/{id}?logico=true)
-    res = client.delete(f"/productos/{producto_id}?logico=true")
-    assert res.status_code == 200, f"Error en DELETE lógico: {res.text}"
-    res_check = client.get(f"/productos/{producto_id}")
-    assert res_check.json()["activo"] is False
-    print(f"✓ DELETE /productos/{producto_id}?logico=true OK (Borrado lógico)")
+    # 13. PUT Producto
+    res = client.put(
+        f"/productos/{prod_id}",
+        json={
+            "nombre": "PlayStation 5 Slim",
+            "precio": 499.99,
+            "stock": 14,
+            "activo": True,
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["precio"] == 499.99
+    print(f"✓ PUT /productos/{prod_id} OK")
 
-    # 8. Test Borrado Físico (DELETE /productos/{id})
-    res = client.delete(f"/productos/{producto_id}")
-    assert res.status_code == 200, f"Error en DELETE físico: {res.text}"
-    print(f"✓ DELETE /productos/{producto_id} OK (Borrado físico)")
+    # 14. Borrado lógico Producto
+    res = client.delete(f"/productos/{prod_id}?logico=true")
+    assert res.status_code == 200
+    assert client.get(f"/productos/{prod_id}").json()["activo"] is False
+    print(f"✓ DELETE /productos/{prod_id}?logico=true OK")
 
-    # 9. Verify 404
-    res = client.get(f"/productos/{producto_id}")
-    assert res.status_code == 404, f"Se esperaba 404 pero se obtuvo {res.status_code}"
-    print(f"✓ GET /productos/{producto_id} devuelve 404 (eliminado)")
+    # 15. Borrado físico Producto
+    res = client.delete(f"/productos/{prod_id}")
+    assert res.status_code == 200
+    assert client.get(f"/productos/{prod_id}").status_code == 404
+    print(f"✓ DELETE /productos/{prod_id} OK (verificado 404)")
 
-    print("\n¡Todas las pruebas del CRUD modularizado pasaron satisfactoriamente!")
+    # 16. PUT y DELETE Categoría
+    res = client.put(
+        f"/categorias/{cat_id}",
+        json={"nombre": "Consolas", "descripcion": "Actualizado", "activo": True},
+    )
+    assert res.status_code == 200
+    print(f"✓ PUT /categorias/{cat_id} OK")
+
+    res = client.delete(f"/categorias/{cat_id}")
+    assert res.status_code == 200
+    assert client.get(f"/categorias/{cat_id}").status_code == 404
+    print(f"✓ DELETE /categorias/{cat_id} OK (verificado 404)")
+
+    print("\n¡Todas las pruebas pasaron satisfactoriamente! (100% OK)")
 
 
 if __name__ == "__main__":
-    test_modular_crud()
+    test_api_completa()

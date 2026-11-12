@@ -1,147 +1,131 @@
-from typing import Annotated, List
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy.orm import Session
+from fastapi_pagination import Page
+from fastapi_pagination.ext.sqlmodel import paginate
+
+# Ahora que usamos SQLModel no traemos nada de sqlalchemy.
+from sqlmodel import Session, select
 
 from database import get_db
-from models.productos import Producto
-from schemas.productos import (
-    ProductoSchema,
-    ProductoCreateSchema,
-    ProductoUpdateSchema,
-)
+from models.anidados import ProductoNested
+
+# Y también nuestros schemas son los models. (fíjense los response_model)
+from models.categoria import Categoria
+from models.producto import Producto, ProductoBase, ProductoPublic
 
 productos_routers = APIRouter()
 
+
+# Constante, mayúsculas con snake_case
 NOT_FOUND_RESPONSE = {
     404: {
         "description": "Response not found si no se encuentra el id",
         "content": {
             "application/json": {
-                "example": {"detail": "Producto no encontrado"}
+                "example": {
+                    "detail": "Producto no encontrado",
+                }
             }
         },
     },
 }
 
 
-# =======================================================
-# PATH OPERATIONS (CRUD CON BASE DE DATOS REAL SQLITE)
-# =======================================================
-
-# 1. READ ALL - Obtener todos los productos
-@productos_routers.get(
-    "/",
-    response_model=List[ProductoSchema],
-    summary="Listar todos los productos"
-)
-async def get_productos(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    """
-    Retorna la lista de productos almacenados en la base de datos real SQLite.
-    Equivale a: SELECT * FROM productos LIMIT limit OFFSET skip
-    """
-    productos = db.query(Producto).offset(skip).limit(limit).all()
-    return productos
+def _validar_categoria(db: Session, categoria_id: int | None) -> None:
+    """Valida que la FK recibida apunte a una categoría existente."""
+    if categoria_id is not None and db.get(Categoria, categoria_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La categoría con id {categoria_id} no existe",
+        )
 
 
-# 2. READ BY ID - Obtener un producto por su clave primaria
+# get all productos (paginado, con categoría anidada)
+@productos_routers.get("/", response_model=Page[ProductoNested])
+async def get_productos(db: Session = Depends(get_db)):
+    # EN SQL SERÍA: SELECT * FROM producto
+    # CON SQLALCHEMY: db.query(Producto).all()
+    return paginate(db, select(Producto))  # paginado directo en la DB
+
+
+# get by id
 @productos_routers.get(
     "/{id}",
-    response_model=ProductoSchema,
     responses=NOT_FOUND_RESPONSE,
-    summary="Obtener un producto por su ID"
+    response_model=ProductoNested,
 )
 async def get_producto_by_id(
-    id: Annotated[int, Path(gt=0, description="ID del producto")],
-    db: Session = Depends(get_db)
+    id: Annotated[int, Path(gt=0)], db: Session = Depends(get_db)
 ):
-    """
-    Busca un producto por su ID usando db.get().
-    """
-    producto = db.get(Producto, id)
-    if producto is not None:
-        return producto
+    prod_obtenido = db.get(Producto, id)
+    if prod_obtenido is not None:
+        return prod_obtenido
     raise HTTPException(status_code=404, detail="Producto no encontrado")
 
 
-# 3. CREATE - Crear un nuevo producto en la base de datos
 @productos_routers.post(
     "/",
-    response_model=ProductoSchema,
+    response_model=ProductoNested,
     status_code=status.HTTP_201_CREATED,
-    summary="Crear un nuevo producto"
-)
+)  # VALIDO EL DATO DE SALIDA
 async def crear_producto(
-    producto_nuevo: ProductoCreateSchema,
-    db: Session = Depends(get_db)
-):
-    """
-    Crea e inserta un nuevo registro en la tabla 'productos'.
-    """
-    # Instanciamos el modelo SQLAlchemy con los datos validados de Pydantic
-    db_producto = Producto(**producto_nuevo.model_dump())
-    db.add(db_producto)
+    producto_nuevo: ProductoBase, db: Session = Depends(get_db)
+):  # VALIDO EL DATO DE ENTRADA
+    _validar_categoria(db, producto_nuevo.categoria_id)
+
+    # Ya no instancio ningún Objeto, sino que hago model_validate
+    producto_db = Producto.model_validate(producto_nuevo)
+    db.add(producto_db)
+    # persistimos en la db con commit
     db.commit()
-    db.refresh(db_producto)
-    return db_producto
+    # refrescamos UNA INSTANCIA (objeto)
+    db.refresh(producto_db)
+    return producto_db
 
 
-# 4. UPDATE - Actualizar un producto existente
 @productos_routers.put(
-    "/{id}",
-    response_model=ProductoSchema,
-    responses=NOT_FOUND_RESPONSE,
-    summary="Actualizar un producto existente"
+    "/{id}", responses=NOT_FOUND_RESPONSE, response_model=ProductoPublic
 )
 async def editar_producto(
-    id: Annotated[int, Path(gt=0, description="ID del producto")],
-    producto_editar: ProductoUpdateSchema,
-    db: Session = Depends(get_db)
+    id: Annotated[int, Path(gt=0, description="Id del producto. >0")],
+    producto_editar: ProductoBase,
+    db: Session = Depends(get_db),
 ):
-    """
-    Actualiza los campos de un producto existente en la base de datos.
-    """
-    db_producto = db.get(Producto, id)
-    if db_producto is None:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    _validar_categoria(db, producto_editar.categoria_id)
 
-    # Modificar solo los campos provistos
-    datos_actualizar = producto_editar.model_dump(exclude_unset=True)
-    for clave, valor in datos_actualizar.items():
-        setattr(db_producto, clave, valor)
+    prod_obtenido = db.get(Producto, id)
 
-    db.commit()
-    db.refresh(db_producto)
-    return db_producto
+    if prod_obtenido is not None:
+        prod_obtenido.nombre = producto_editar.nombre
+        prod_obtenido.descripcion = producto_editar.descripcion
+        prod_obtenido.precio = producto_editar.precio
+        prod_obtenido.stock = producto_editar.stock
+        prod_obtenido.activo = producto_editar.activo
+        prod_obtenido.categoria_id = producto_editar.categoria_id
+        db.commit()
+        db.refresh(prod_obtenido)
+        return prod_obtenido
+
+    raise HTTPException(status_code=404, detail="Producto no encontrado")
 
 
-# 5. DELETE - Eliminar un producto (soporta borrado físico y borrado lógico)
 @productos_routers.delete(
-    "/{id}",
-    responses=NOT_FOUND_RESPONSE,
-    summary="Eliminar un producto por ID"
+    "/{id}",  # ?logico=false
+    responses=NOT_FOUND_RESPONSE,  # DOCUMENTACION
+    response_model=list[ProductoPublic],  # VALIDACION DATOS DE SALIDA
 )
 async def borrar_producto(
-    id: Annotated[int, Path(gt=0, description="ID del producto")],
-    db: Session = Depends(get_db),
-    logico: Annotated[bool, Query(description="True para borrado lógico (activo=False)")] = False
+    id: Annotated[int, Path(gt=0)],
+    db: Annotated[Session, Depends(get_db)],
+    logico: Annotated[bool, Query(description="Mantener registro?")] = False,
 ):
-    """
-    Elimina un producto de la base de datos SQLite.
-    Si logico=True, desactiva el producto sin borrar el registro.
-    """
-    db_producto = db.get(Producto, id)
-    if db_producto is None:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-    if logico:
-        db_producto.activo = False
+    prod_obtenido = db.get(Producto, id)
+    if prod_obtenido is not None:
+        if logico:
+            prod_obtenido.activo = False
+        else:
+            db.delete(prod_obtenido)
         db.commit()
-        return {"mensaje": f"Producto con ID {id} desactivado (borrado lógico)"}
-    else:
-        db.delete(db_producto)
-        db.commit()
-        return {"mensaje": f"Producto con ID {id} eliminado exitosamente de la base de datos"}
+        return db.exec(select(Producto)).all()
+    raise HTTPException(status_code=404, detail="Producto no encontrado")
